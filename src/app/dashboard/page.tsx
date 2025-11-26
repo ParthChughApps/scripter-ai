@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/components/AuthProvider';
@@ -29,13 +29,7 @@ export default function DashboardPage() {
     }
   }, [user, authLoading, router]);
 
-  useEffect(() => {
-    if (user) {
-      fetchScripts();
-    }
-  }, [user]);
-
-  const fetchScripts = async () => {
+  const fetchScripts = useCallback(async () => {
     if (!user || !db) return;
 
     setLoading(true);
@@ -72,7 +66,13 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchScripts();
+    }
+  }, [user, fetchScripts]);
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this script set?') || !db) {

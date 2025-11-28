@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 // HeyGen API Base URL - V2 API
 const HEYGEN_API_BASE = 'https://api.heygen.com/v2';
 
+// Mark this route as dynamic (not statically generated)
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);

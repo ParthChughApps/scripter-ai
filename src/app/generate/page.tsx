@@ -6,9 +6,145 @@ import { useAuth } from '@/components/AuthProvider';
 import { Navbar } from '@/components/Navbar';
 import { Loader } from '@/components/Loader';
 import { ScriptCard } from '@/components/ScriptCard';
-import { generateScripts, Script, ScriptResponse } from '@/lib/api';
+import { generateScripts, Script, ScriptResponse, listHeyGenAvatars, HeyGenAvatar } from '@/lib/api';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+
+// Known custom avatar IDs - add your avatar IDs here as a fallback
+// This ensures your avatars show up even if the API doesn't return them
+const KNOWN_CUSTOM_AVATAR_IDS = [
+  '32dbf2775e394a51a96c75e5aadeeb86', // Nikhil Batra
+  'dd696b5968a94f08a047b2e80c86ca69', // Your second avatar
+];
+
+// Filter function to get only custom avatars
+// Custom avatars have UUID-like IDs (32 hex characters, no underscores)
+// Public avatars have descriptive names with underscores or "_public_" in them
+function filterCustomAvatars(avatars: HeyGenAvatar[]): HeyGenAvatar[] {
+  if (avatars.length === 0) return [];
+  
+  console.log('=== Avatar Filtering Debug ===');
+  console.log(`Total avatars received: ${avatars.length}`);
+  
+  // Log all avatar IDs before filtering
+  console.log('All avatar IDs:', avatars.map(a => ({
+    id: a.avatar_id,
+    name: a.avatar_name || a.name,
+    matchesUUID: /^[a-f0-9]{32}$/i.test(a.avatar_id)
+  })));
+  
+  // First, remove duplicates based on avatar_id
+  const uniqueAvatars = Array.from(
+    new Map(avatars.map(avatar => [avatar.avatar_id, avatar])).values()
+  );
+  
+  console.log(`After deduplication: ${uniqueAvatars.length} unique avatars`);
+  
+  // Check for UUID pattern matches
+  const uuidMatches = uniqueAvatars.filter(avatar => {
+    const avatarId = avatar.avatar_id;
+    return /^[a-f0-9]{32}$/i.test(avatarId);
+  });
+  
+  console.log(`Avatars matching UUID pattern (32 hex chars): ${uuidMatches.length}`);
+  uuidMatches.forEach(avatar => {
+    console.log(`  - ${avatar.avatar_name || avatar.name || 'Unnamed'}: ${avatar.avatar_id}`);
+  });
+  
+  // Specifically check for the user's known custom avatar IDs
+  const knownCustomIds = ['32dbf2775e394a51a96c75e5aadeeb86', 'dd696b5968a94f08a047b2e80c86ca69'];
+  console.log('\n=== Checking for known custom avatar IDs ===');
+  knownCustomIds.forEach(targetId => {
+    const found = uniqueAvatars.find(a => a.avatar_id === targetId);
+    if (found) {
+      console.log(`✓ Found: ${targetId} - ${found.avatar_name || found.name || 'Unnamed'}`);
+    } else {
+      console.log(`✗ NOT FOUND: ${targetId} - This avatar is not in the API response!`);
+      // Check if there's a similar ID (case-insensitive)
+      const similar = uniqueAvatars.find(a => a.avatar_id.toLowerCase() === targetId.toLowerCase());
+      if (similar) {
+        console.log(`  ⚠️ Found similar (case difference): ${similar.avatar_id}`);
+      }
+    }
+  });
+  console.log('============================================\n');
+  
+  // Check for non-UUID but potentially custom avatars
+  const nonUUIDAvatars = uniqueAvatars.filter(avatar => {
+    const avatarId = avatar.avatar_id;
+    return !/^[a-f0-9]{32}$/i.test(avatarId) && 
+           !avatarId.includes('_public_') &&
+           !/^[A-Z][a-z]+_[a-z_]+$/i.test(avatarId);
+  });
+  
+  if (nonUUIDAvatars.length > 0) {
+    console.log(`Avatars with non-UUID but potentially custom IDs: ${nonUUIDAvatars.length}`);
+    nonUUIDAvatars.forEach(avatar => {
+      console.log(`  - ${avatar.avatar_name || avatar.name || 'Unnamed'}: ${avatar.avatar_id}`);
+    });
+  }
+  
+  // Filter to only custom avatars - STRICT UUID pattern only (32 hex characters)
+  // This matches the pattern: 32dbf2775e394a51a96c75e5aadeeb86
+  const customAvatars = uniqueAvatars.filter(avatar => {
+    const avatarId = avatar.avatar_id;
+    
+    // Only keep avatars with UUID-like IDs (exactly 32 hex characters, no underscores)
+    // This is the pattern for custom avatars
+    const isCustomAvatar = /^[a-f0-9]{32}$/i.test(avatarId);
+    
+    return isCustomAvatar;
+  });
+  
+  console.log(`Final filtered count: ${customAvatars.length} custom avatars`);
+  console.log(`Removed ${avatars.length - customAvatars.length} public/duplicate avatars`);
+  
+  // Check if any known custom avatars are missing
+  const foundKnownIds = customAvatars.map(a => a.avatar_id);
+  const missingKnownIds = KNOWN_CUSTOM_AVATAR_IDS.filter(id => !foundKnownIds.includes(id));
+  
+  if (missingKnownIds.length > 0) {
+    console.warn(`⚠️ Missing known custom avatars: ${missingKnownIds.join(', ')}`);
+    console.warn('These avatars are not in the API response. They might be in draft/pending state.');
+    
+    // Try to find them in the original list (maybe they were filtered out)
+    missingKnownIds.forEach(missingId => {
+      const foundInOriginal = avatars.find(a => a.avatar_id === missingId);
+      if (foundInOriginal) {
+        console.log(`  Found ${missingId} in original list but it was filtered out - adding it back`);
+        customAvatars.push(foundInOriginal); // Add it back
+      } else {
+        console.log(`  ${missingId} is not in the API response at all`);
+        // Create a placeholder avatar object for known avatars that aren't in the response
+        // This allows them to still be selectable even if not returned by the API
+        const placeholderAvatar: HeyGenAvatar = {
+          avatar_id: missingId,
+          avatar_name: `Avatar ${missingId.substring(0, 8)}...`,
+          name: `Avatar ${missingId.substring(0, 8)}...`,
+          is_custom: true,
+        };
+        console.log(`  Creating placeholder for ${missingId} so it can still be used`);
+        customAvatars.push(placeholderAvatar);
+      }
+    });
+  }
+  
+  if (customAvatars.length > 0) {
+    console.log('Custom avatars found:');
+    customAvatars.forEach((avatar, index) => {
+      const isUUID = /^[a-f0-9]{32}$/i.test(avatar.avatar_id);
+      const isKnown = KNOWN_CUSTOM_AVATAR_IDS.includes(avatar.avatar_id);
+      console.log(`  ${index + 1}. ${avatar.avatar_name || avatar.name || 'Unnamed'}`);
+      console.log(`     ID: ${avatar.avatar_id} ${isUUID ? '(UUID)' : '(Non-UUID)'} ${isKnown ? '(Known)' : ''}`);
+    });
+  } else {
+    console.warn('⚠️ No custom avatars found! Check if your avatar IDs match the UUID pattern.');
+  }
+  
+  console.log('================================');
+  
+  return customAvatars;
+}
 
 function GenerateContent() {
   const { user, loading: authLoading } = useAuth();
@@ -20,6 +156,8 @@ function GenerateContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [avatars, setAvatars] = useState<HeyGenAvatar[]>([]);
+  const [loadingAvatars, setLoadingAvatars] = useState(false);
 
   useEffect(() => {
     const topicParam = searchParams.get('topic');
@@ -27,6 +165,13 @@ function GenerateContent() {
       setTopic(decodeURIComponent(topicParam));
     }
   }, [searchParams]);
+
+  // Redirect to login if not authenticated - must be in useEffect to avoid render warning
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login');
+    }
+  }, [user, authLoading, router]);
 
   if (authLoading) {
     return (
@@ -37,8 +182,7 @@ function GenerateContent() {
   }
 
   if (!user) {
-    router.push('/login');
-    return null;
+    return null; // Will redirect via useEffect
   }
 
   const handleGenerate = async (e: React.FormEvent) => {
@@ -46,18 +190,52 @@ function GenerateContent() {
     setError('');
     setLoading(true);
     setScripts([]);
+    setAvatars([]);
+    setLoadingAvatars(true);
 
     try {
-      const response: ScriptResponse = await generateScripts(topic, numVariations);
-      setScripts(response.scripts);
-      
-      // Auto-save to Firestore
-      await saveToFirestore(response.scripts);
+      // Fetch avatars and scripts in parallel
+      const [scriptsResponse, avatarsResponse] = await Promise.allSettled([
+        generateScripts(topic, numVariations),
+        listHeyGenAvatars(),
+      ]);
+
+      // Handle scripts response
+      if (scriptsResponse.status === 'fulfilled') {
+        setScripts(scriptsResponse.value.scripts);
+        // Auto-save to Firestore
+        await saveToFirestore(scriptsResponse.value.scripts);
+      } else {
+        throw scriptsResponse.reason;
+      }
+
+      // Handle avatars response
+      if (avatarsResponse.status === 'fulfilled') {
+        const avatarData = avatarsResponse.value;
+        let avatarList: HeyGenAvatar[] = [];
+        if (avatarData.data) {
+          if (Array.isArray(avatarData.data)) {
+            avatarList = avatarData.data;
+          } else if (avatarData.data.avatars && Array.isArray(avatarData.data.avatars)) {
+            avatarList = avatarData.data.avatars;
+          }
+        }
+        
+        // Don't filter here - pass all avatars to ScriptCard so it can separate custom and public
+        // The ScriptCard component will handle the separation
+        console.log(`✓ Loaded ${avatarList.length} total avatars from API`);
+        
+        setAvatars(avatarList); // Pass all avatars, not just custom ones
+      } else {
+        console.error('Error fetching avatars:', avatarsResponse.reason);
+        // Don't throw - avatars are optional, scripts are more important
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to generate scripts');
       console.error('Generation error:', err);
     } finally {
       setLoading(false);
+      setLoadingAvatars(false);
     }
   };
 
@@ -199,7 +377,7 @@ function GenerateContent() {
               <div className="space-y-6">
                 {scripts.map((script, index) => (
                   <div key={script.id} className="animate-fadeIn" style={{ animationDelay: `${index * 100}ms` }}>
-                    <ScriptCard script={script} />
+                    <ScriptCard script={script} avatars={avatars} />
                   </div>
                 ))}
               </div>

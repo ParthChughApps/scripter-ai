@@ -39,7 +39,24 @@ export const generateScripts = async (
 export interface HeyGenAvatar {
   avatar_id: string;
   name?: string;
-  preview_url?: string;
+  avatar_name?: string;
+  preview_url?: string; // Legacy field name
+  preview_image_url?: string; // Actual field name from HeyGen API
+  preview_video_url?: string;
+  gender?: string;
+  premium?: boolean;
+  type?: string | null;
+  tags?: string | null;
+  default_voice_id?: string | null;
+  // Fields that might indicate ownership/custom avatars
+  owner?: string;
+  owner_id?: string;
+  is_custom?: boolean;
+  is_public?: boolean;
+  avatar_type?: string;
+  created_by?: string;
+  user_id?: string;
+  [key: string]: any; // Allow additional fields we might discover
 }
 
 export interface HeyGenVoice {
@@ -80,12 +97,44 @@ export interface GeneratedVideo {
   completedAt?: Date;
 }
 
+// Video aspect ratio types
+export type VideoAspectRatio = 'landscape' | 'vertical' | 'square' | 'portrait';
+
+export interface VideoDimensions {
+  width: number;
+  height: number;
+}
+
+export const VIDEO_ASPECT_RATIOS: Record<VideoAspectRatio, { dimensions: VideoDimensions; label: string; usage: string }> = {
+  landscape: {
+    dimensions: { width: 1920, height: 1080 },
+    label: 'Landscape (16:9)',
+    usage: 'YouTube, Courses'
+  },
+  vertical: {
+    dimensions: { width: 1080, height: 1920 },
+    label: 'Vertical (9:16)',
+    usage: 'Reels, Shorts, TikTok'
+  },
+  square: {
+    dimensions: { width: 1080, height: 1080 },
+    label: 'Square (1:1)',
+    usage: 'Instagram Feed'
+  },
+  portrait: {
+    dimensions: { width: 1080, height: 1350 },
+    label: 'Portrait (4:5)',
+    usage: 'Stories, Ads'
+  }
+};
+
 // HeyGen API functions
 export const createHeyGenVideo = async (
   script: string,
   avatarId?: string,
   voiceId?: string,
-  videoTitle?: string
+  videoTitle?: string,
+  aspectRatio?: VideoAspectRatio
 ): Promise<HeyGenVideoResponse> => {
   const response = await fetch('/api/heygen/createVideo', {
     method: 'POST',
@@ -97,12 +146,20 @@ export const createHeyGenVideo = async (
       avatarId,
       voiceId,
       videoTitle,
+      aspectRatio,
     }),
   });
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || 'Failed to create video');
+    // Log full error details to console for debugging
+    console.error('HeyGen API Error Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      error: error,
+      fullResponse: error,
+    });
+    throw new Error(error.error || error.message || `HeyGen API error: ${response.statusText}`);
   }
 
   return response.json();
